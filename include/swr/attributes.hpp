@@ -2,7 +2,6 @@
 
 #include <array>
 #include <iostream>
-#include <mutex>
 #include <vector>
 
 #include <Eigen/Core>
@@ -77,21 +76,6 @@ public:
     Material material;
 };
 
-class FragmentAttributes {
-public:
-    FragmentAttributes(Float r = 0, Float g = 0, Float b = 0, Float a = 1)
-        : FragmentAttributes(Vector3F(r, g, b), a)
-    {
-    }
-    FragmentAttributes(const Vector3F& rgb, Float a = 1)
-    {
-        color.head<3>() = rgb;
-        color(3) = a;
-    }
-    Float depth;
-    Vector4F color;
-};
-
 class FrameBufferAttributes {
 public:
     FrameBufferAttributes(
@@ -106,7 +90,26 @@ public:
     }
     Float depth;
     Eigen::Matrix<uint8_t, 4, 1> color;
-    std::mutex lock;
+};
+
+class FragmentAttributes {
+public:
+    FragmentAttributes(Float r = 0, Float g = 0, Float b = 0, Float a = 1)
+        : FragmentAttributes(Vector3F(r, g, b), a)
+    {
+    }
+    FragmentAttributes(const Vector3F& rgb, Float a = 1)
+    {
+        color.head<3>() = rgb;
+        color(3) = a;
+    }
+    FragmentAttributes(const FrameBufferAttributes& fba)
+    {
+        color = fba.color.cast<Float>() / Float(255.0);
+        depth = fba.depth;
+    }
+    Float depth;
+    Vector4F color;
 };
 
 typedef Eigen::Matrix<FrameBufferAttributes, Eigen::Dynamic, Eigen::Dynamic>

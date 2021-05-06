@@ -155,7 +155,7 @@ Shaders create_edge_shaders()
         {
             pixel.color =
                 round(fa.color.array().max(0).min(1) * 255).cast<uint8_t>();
-            // out.depth = fa.depth;
+            pixel.depth = fa.depth - 1e-4;
         }
     };
 

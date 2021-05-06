@@ -4,7 +4,9 @@
 
 #include <Eigen/LU> // Needed for .inverse()
 
+#include <tbb/blocked_range.h>
 #include <tbb/blocked_range2d.h>
+#include <tbb/enumerable_thread_specific.h>
 #include <tbb/parallel_for.h>
 
 namespace swr {
@@ -15,7 +17,7 @@ void rasterize_triangle(
     const VertexAttributes& v1,
     const VertexAttributes& v2,
     const VertexAttributes& v3,
-    FrameBuffer& frameBuffer)
+    FrameBuffer& frame_buffer)
 {
     // Collect coordinates into a matrix and convert to canonical representation
     Eigen::Matrix<Float, 3, 4> p;
@@ -24,8 +26,8 @@ void rasterize_triangle(
     p.row(2) = v3.position.array() / v3.position.w();
 
     // Coordinates are in -1..1, rescale to pixel size (x,y only)
-    p.col(0) = ((p.col(0).array() + 1.0) / 2.0) * frameBuffer.rows();
-    p.col(1) = ((p.col(1).array() + 1.0) / 2.0) * frameBuffer.cols();
+    p.col(0) = ((p.col(0).array() + 1.0) / 2.0) * frame_buffer.rows();
+    p.col(1) = ((p.col(1).array() + 1.0) / 2.0) * frame_buffer.cols();
 
     // Find bounding box in pixels
     int lx = std::floor(p.col(0).minCoeff());
@@ -34,10 +36,10 @@ void rasterize_triangle(
     int uy = std::ceil(p.col(1).maxCoeff());
 
     // Clamp to framebuffer
-    lx = std::min(std::max(lx, int(0)), int(frameBuffer.rows() - 1));
-    ly = std::min(std::max(ly, int(0)), int(frameBuffer.cols() - 1));
-    ux = std::max(std::min(ux, int(frameBuffer.rows() - 1)), int(0));
-    uy = std::max(std::min(uy, int(frameBuffer.cols() - 1)), int(0));
+    lx = std::min(std::max(lx, int(0)), int(frame_buffer.rows() - 1));
+    ly = std::min(std::max(ly, int(0)), int(frame_buffer.cols() - 1));
+    ux = std::max(std::min(ux, int(frame_buffer.rows() - 1)), int(0));
+    uy = std::max(std::min(uy, int(frame_buffer.cols() - 1)), int(0));
 
     // Build the implicit triangle representation
     Matrix3F A;
@@ -52,8 +54,8 @@ void rasterize_triangle(
     tbb::parallel_for(
         tbb::blocked_range2d<size_t>(lx, ux + 1, ly, uy + 1),
         [&](const tbb::blocked_range2d<size_t>& r) {
-            for (size_t i = r.rows().begin(); i != r.rows().end(); ++i) {
-                for (size_t j = r.cols().begin(); j != r.cols().end(); ++j) {
+            for (size_t i = r.rows().begin(); i < r.rows().end(); i++) {
+                for (size_t j = r.cols().begin(); j < r.cols().end(); j++) {
                     // The pixel center is offset by 0.5, 0.5
                     Vector3F pixel(i + 0.5, j + 0.5, 1);
                     Vector3F b = Ai * pixel;
@@ -64,9 +66,7 @@ void rasterize_triangle(
                         if (va.position.z() >= -1 && va.position.z() <= 1) {
                             FragmentAttributes frag =
                                 shaders.fragment_shader(va, uniform);
-                            frameBuffer(i, j).lock.lock();
-                            shaders.blending_shader(frag, frameBuffer(i, j));
-                            frameBuffer(i, j).lock.unlock();
+                            shaders.blending_shader(frag, frame_buffer(i, j));
                         }
                     }
                 }
@@ -78,21 +78,49 @@ void rasterize_triangles(
     const Shaders& shaders,
     const UniformAttributes& uniform,
     const std::vector<VertexAttributes>& vertices,
-    FrameBuffer& frameBuffer)
+    FrameBuffer& frame_buffer)
 {
     // Call vertex shader on all vertices (parallel)
     std::vector<VertexAttributes> v(vertices.size());
-    tbb::parallel_for(size_t(0), vertices.size(), [&](size_t i) {
-        v[i] = shaders.vertex_shader(vertices[i], uniform);
-    });
+    tbb::parallel_for(
+        tbb::blocked_range<size_t>(size_t(0), vertices.size()),
+        [&](const tbb::blocked_range<size_t>& r) {
+            for (size_t i = r.begin(); i < r.end(); i++) {
+                v[i] = shaders.vertex_shader(vertices[i], uniform);
+            }
+        });
+
+    tbb::enumerable_thread_specific<FrameBuffer> storage(frame_buffer);
 
     // Call the rasterization function on every triangle
     assert(vertices.size() % 3 == 0);
-    tbb::parallel_for(size_t(0), vertices.size() / 3, [&](size_t i) {
-        rasterize_triangle(
-            shaders, uniform, v[i * 3 + 0], v[i * 3 + 1], v[i * 3 + 2],
-            frameBuffer);
-    });
+    tbb::parallel_for(
+        tbb::blocked_range<size_t>(size_t(0), vertices.size() / 3),
+        [&](const tbb::blocked_range<size_t> r) {
+            FrameBuffer& local_frame_buffer = storage.local();
+
+            for (size_t i = r.begin(); i < r.end(); i++) {
+                rasterize_triangle(
+                    shaders, uniform, v[i * 3 + 0], v[i * 3 + 1], v[i * 3 + 2],
+                    local_frame_buffer);
+            }
+        });
+
+    // Blend the frame buffers
+    for (const FrameBuffer& local_frame_buffer : storage) {
+        tbb::parallel_for(
+            tbb::blocked_range2d<size_t>(
+                0, frame_buffer.rows(), 0, frame_buffer.cols()),
+
+            [&](const tbb::blocked_range2d<size_t>& r) {
+                for (size_t i = r.rows().begin(); i < r.rows().end(); i++) {
+                    for (size_t j = r.cols().begin(); j < r.cols().end(); j++) {
+                        shaders.blending_shader(
+                            local_frame_buffer(i, j), frame_buffer(i, j));
+                    }
+                }
+            });
+    }
 }
 
 void rasterize_line(
@@ -101,7 +129,7 @@ void rasterize_line(
     const VertexAttributes& v1,
     const VertexAttributes& v2,
     Float line_thickness,
-    FrameBuffer& frameBuffer)
+    FrameBuffer& frame_buffer)
 {
     // Collect coordinates into a matrix and convert to canonical
     // representation
@@ -110,8 +138,8 @@ void rasterize_line(
     p.row(1) = v2.position.array() / v2.position[3];
 
     // Coordinates are in -1..1, rescale to pixel size (x,y only)
-    p.col(0) = ((p.col(0).array() + 1.0) / 2.0) * frameBuffer.rows();
-    p.col(1) = ((p.col(1).array() + 1.0) / 2.0) * frameBuffer.cols();
+    p.col(0) = ((p.col(0).array() + 1.0) / 2.0) * frame_buffer.rows();
+    p.col(1) = ((p.col(1).array() + 1.0) / 2.0) * frame_buffer.cols();
 
     // Find bounding box in pixels, adding the line thickness
     int lx = std::floor(p.col(0).minCoeff() - line_thickness);
@@ -120,10 +148,10 @@ void rasterize_line(
     int uy = std::ceil(p.col(1).maxCoeff() + line_thickness);
 
     // Clamp to framebuffer
-    lx = std::min(std::max(lx, int(0)), int(frameBuffer.rows() - 1));
-    ly = std::min(std::max(ly, int(0)), int(frameBuffer.cols() - 1));
-    ux = std::max(std::min(ux, int(frameBuffer.rows() - 1)), int(0));
-    uy = std::max(std::min(uy, int(frameBuffer.cols() - 1)), int(0));
+    lx = std::min(std::max(lx, int(0)), int(frame_buffer.rows() - 1));
+    ly = std::min(std::max(ly, int(0)), int(frame_buffer.cols() - 1));
+    ux = std::max(std::min(ux, int(frame_buffer.rows() - 1)), int(0));
+    uy = std::max(std::min(uy, int(frame_buffer.cols() - 1)), int(0));
 
     // We only need the 2d coordinates of the endpoints of the line
     Vector2F l1(p(0, 0), p(0, 1));
@@ -137,8 +165,8 @@ void rasterize_line(
     tbb::parallel_for(
         tbb::blocked_range2d<size_t>(lx, ux + 1, ly, uy + 1),
         [&](const tbb::blocked_range2d<size_t>& r) {
-            for (size_t i = r.rows().begin(); i != r.rows().end(); ++i) {
-                for (size_t j = r.cols().begin(); j != r.cols().end(); ++j) {
+            for (size_t i = r.rows().begin(); i != r.rows().end(); i++) {
+                for (size_t j = r.cols().begin(); j != r.cols().end(); j++) {
                     // The pixel center is offset by 0.5, 0.5
                     Vector2F pixel(i + 0.5, j + 0.5);
 
@@ -162,9 +190,7 @@ void rasterize_line(
                         if (va.position[2] >= -1 && va.position[2] <= 1) {
                             FragmentAttributes frag =
                                 shaders.fragment_shader(va, uniform);
-                            frameBuffer(i, j).lock.lock();
-                            shaders.blending_shader(frag, frameBuffer(i, j));
-                            frameBuffer(i, j).lock.unlock();
+                            shaders.blending_shader(frag, frame_buffer(i, j));
                         }
                     }
                 }
@@ -177,28 +203,56 @@ void rasterize_lines(
     const UniformAttributes& uniform,
     const std::vector<VertexAttributes>& vertices,
     Float line_thickness,
-    FrameBuffer& frameBuffer)
+    FrameBuffer& frame_buffer)
 {
     // Call vertex shader on all vertices (parallel)
     std::vector<VertexAttributes> v(vertices.size());
-    tbb::parallel_for(size_t(0), vertices.size(), [&](size_t i) {
-        v[i] = shaders.vertex_shader(vertices[i], uniform);
-    });
+    tbb::parallel_for(
+        tbb::blocked_range<size_t>(size_t(0), vertices.size()),
+        [&](const tbb::blocked_range<size_t>& r) {
+            for (size_t i = r.begin(); i < r.end(); i++) {
+                v[i] = shaders.vertex_shader(vertices[i], uniform);
+            }
+        });
+
+    tbb::enumerable_thread_specific<FrameBuffer> storage(frame_buffer);
 
     // Call the rasterization function on every line
     assert(vertices.size() % 2 == 0);
-    tbb::parallel_for(size_t(0), vertices.size() / 2, [&](size_t i) {
-        rasterize_line(
-            shaders, uniform, v[i * 2 + 0], v[i * 2 + 1], line_thickness,
-            frameBuffer);
-    });
+    tbb::parallel_for(
+        tbb::blocked_range<size_t>(size_t(0), vertices.size() / 2),
+        [&](const tbb::blocked_range<size_t> r) {
+            FrameBuffer& local_frame_buffer = storage.local();
+
+            for (size_t i = r.begin(); i < r.end(); i++) {
+                rasterize_line(
+                    shaders, uniform, v[i * 2 + 0], v[i * 2 + 1],
+                    line_thickness, local_frame_buffer);
+            }
+        });
+
+    // Blend the frame buffers
+    for (const FrameBuffer& local_frame_buffer : storage) {
+        tbb::parallel_for(
+            tbb::blocked_range2d<size_t>(
+                0, frame_buffer.rows(), 0, frame_buffer.cols()),
+
+            [&](const tbb::blocked_range2d<size_t>& r) {
+                for (size_t i = r.rows().begin(); i < r.rows().end(); i++) {
+                    for (size_t j = r.cols().begin(); j < r.cols().end(); j++) {
+                        shaders.blending_shader(
+                            local_frame_buffer(i, j), frame_buffer(i, j));
+                    }
+                }
+            });
+    }
 }
 
 void framebuffer_to_uint8(
-    const FrameBuffer& frameBuffer, std::vector<uint8_t>& image)
+    const FrameBuffer& frame_buffer, std::vector<uint8_t>& image)
 {
-    const int w = frameBuffer.rows();     // Image width
-    const int h = frameBuffer.cols();     // Image height
+    const int w = frame_buffer.rows();    // Image width
+    const int h = frame_buffer.cols();    // Image height
     const int comp = 4;                   // 4 Channels Red, Green, Blue, Alpha
     const int stride_in_bytes = w * comp; // Length of one row in bytes
     image.resize(w * h * comp, 0);        // The image itself;
@@ -206,10 +260,10 @@ void framebuffer_to_uint8(
     for (unsigned wi = 0; wi < w; ++wi) {
         for (unsigned hi = 0; hi < h; ++hi) {
             unsigned hif = h - 1 - hi;
-            image[(hi * w * 4) + (wi * 4) + 0] = frameBuffer(wi, hif).color[0];
-            image[(hi * w * 4) + (wi * 4) + 1] = frameBuffer(wi, hif).color[1];
-            image[(hi * w * 4) + (wi * 4) + 2] = frameBuffer(wi, hif).color[2];
-            image[(hi * w * 4) + (wi * 4) + 3] = frameBuffer(wi, hif).color[3];
+            image[(hi * w * 4) + (wi * 4) + 0] = frame_buffer(wi, hif).color[0];
+            image[(hi * w * 4) + (wi * 4) + 1] = frame_buffer(wi, hif).color[1];
+            image[(hi * w * 4) + (wi * 4) + 2] = frame_buffer(wi, hif).color[2];
+            image[(hi * w * 4) + (wi * 4) + 3] = frame_buffer(wi, hif).color[3];
         }
     }
 }
