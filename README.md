@@ -1,8 +1,8 @@
 # software-renderer
 
-A basic headless software renderer.
+<img src="img/example.png">
 
-
+<center>A basic headless software renderer.</center>
 
 ## Acknowledgements
 

@@ -21,6 +21,8 @@ using namespace swr;
 struct SimRenderArgs {
     fs::path obj_path;
     fs::path output_path = fs::path("obj_seq.mp4");
+    fs::path render_settings_path =
+        fs::path(__FILE__).parent_path() / "render_settings.json";
     spdlog::level::level_enum loglevel = spdlog::level::level_enum::info;
     int fps = -1;
 };
@@ -34,34 +36,20 @@ SimRenderArgs parse_args(int argc, char* argv[])
     app.add_option(
            "obj_path,-i,--input", args.obj_path,
            "path to folder with a sequence of OBJs")
-        ->required();
+        ->required()
+        ->check(CLI::ExistingDirectory);
     app.add_option("-o,--output", args.output_path, "path to output render");
     app.add_option(
         "-l,--log,--loglevel", args.loglevel,
         "set log level 0=trace, 1=debug, 2=info, 3=warn, 4=error, 5=critical, "
         "6=off");
     app.add_option("--fps", args.fps, "output video frames per second");
+    app.add_option("--settings", args.render_settings_path, "render settings");
 
     try {
         app.parse(argc, argv);
     } catch (const CLI::ParseError& e) {
         exit(app.exit(e));
-    }
-
-    if (!fs::exists(args.obj_path)) {
-        exit(app.exit(CLI::Error(
-            "input does not exist",
-            fmt::format(
-                "input path does not exist ({})", args.obj_path.string()))));
-    }
-
-    if (!fs::is_directory(args.obj_path)) {
-        exit(app.exit(CLI::Error(
-            "invalid input",
-            fmt::format(
-                "invalid input path ({}) must be a directory containing an OBJ "
-                "sequence",
-                args.obj_path.string()))));
     }
 
     return args;
@@ -186,13 +174,11 @@ int main(int argc, char* argv[])
 
     ///////////////////////////////////////////////////////////////////////////
     // Create a scene
-    auto render_args_path =
-        fs::path(__FILE__).parent_path() / "render_settings.json";
     nlohmann::json render_args;
-    if (!read_json(render_args_path.string(), render_args)) {
+    if (!read_json(args.render_settings_path.string(), render_args)) {
         spdlog::error(
             "Invalid render settings JSON file ({})",
-            render_args_path.string());
+            args.render_settings_path.string());
         return 1;
     }
     Scene scene(render_args);
