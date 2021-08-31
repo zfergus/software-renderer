@@ -1,7 +1,9 @@
 # software-renderer
 
 <p align="center">
-    <img src="img/example.png">
+    <img src="img/example.png" width="25%">
+</p>
+<p align="center">
     A basic headless software renderer.
 </p>
 
