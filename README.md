@@ -2,7 +2,9 @@
 
 <img src="img/example.png">
 
-<center>A basic headless software renderer.</center>
+<p align="center">
+  A basic headless software renderer.
+</p>
 
 ## Acknowledgements
 
