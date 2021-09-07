@@ -1,0 +1,148 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  CTEST_OUTPUT_ON_FAILURE: ON
+  CTEST_PARALLEL_LEVEL: 2
+
+jobs:
+  ####################
+  # Linux / macOS
+  ####################
+
+  Unix:
+    name: ${{ matrix.name }} (${{ matrix.config }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-18.04, ubuntu-20.04, macos-10.15, macos-11]
+        config: [Debug, Release]
+        include:
+          - os: macos-10.15
+            name: macOS 10.15
+          - os: macos-11
+            name: macOS 11
+          - os: ubuntu-18.04
+            name: Ubunutu 18.04
+          - os: ubuntu-20.04
+            name: Ubunutu 20.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v1
+        with:
+          fetch-depth: 10
+
+      - name: Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install ccache ffmpeg
+
+      - name: Dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ccache ffmpeg
+
+      - name: Cache Build
+        id: cache-build
+        uses: actions/cache@v1
+        with:
+          path: ~/.ccache
+          key: ${{ runner.os }}-${{ matrix.config }}-cache
+
+      - name: Prepare ccache
+        run: |
+          ccache --max-size=1.0G
+          ccache -V && ccache --show-stats && ccache --zero-stats
+
+      - name: Configure
+        run: |
+          mkdir -p build
+          cd build
+          cmake .. \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DSOFTWARE_RENDERER_BUILD_EXAMPLE=ON \
+            -DCMAKE_BUILD_TYPE=${{ matrix.config }}
+
+      - name: Build
+        run: cd build; make -j2; ccache --show-stats
+
+      - name: Run example
+        run: cd build; ./example/render_objs -i ../example/objs -o video.mp4
+
+  ####################
+  # Windows
+  ####################
+
+  Windows:
+    name: ${{ matrix.name }} (${{ matrix.config }})
+    runs-on: windows-2019
+    env:
+      CC: cl.exe
+      CXX: cl.exe
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2019, windows-2022]
+        config: [Debug, Release]
+        include:
+          - os: windows-2019
+            name: Windows 2019
+          - os: windows-2022
+            name: Windows 2022
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v1
+        with:
+          fetch-depth: 10
+
+      - name: Ninja
+        uses: seanmiddleditch/gha-setup-ninja@master
+
+      - name: Setup FFmpeg
+        uses: FedericoCarboni/setup-ffmpeg@v1
+
+        # https://github.com/actions/cache/issues/101
+      - name: Set env
+        run: |
+          echo "appdata=$env:LOCALAPPDATA" >> ${env:GITHUB_ENV}
+
+      - name: Cache build
+        id: cache-build
+        uses: actions/cache@v2
+        with:
+          path: ${{ env.appdata }}\Mozilla\sccache
+          key: ${{ runner.os }}-${{ matrix.config }}-cache-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-${{ matrix.config }}-cache
+
+      - name: Prepare sccache
+        run: |
+          Invoke-Expression (New-Object System.Net.WebClient).DownloadString('https://get.scoop.sh')
+          scoop install sccache --global
+          # Scoop modifies the PATH so we make it available for the next steps of the job
+          echo "${env:PATH}" >> ${env:GITHUB_PATH}
+
+        # We run configure + build in the same step, since they both need to call VsDevCmd
+        # Also, cmd uses ^ to break commands into multiple lines (in powershell this is `)
+      - name: Configure and build
+        shell: cmd
+        run: |
+          call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64
+          cmake -G Ninja ^
+            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache ^
+            -DCMAKE_BUILD_TYPE=${{ matrix.config }} ^
+            -DSOFTWARE_RENDERER_BUILD_EXAMPLE=ON ^
+            -B build ^
+            -S .
+          cd build
+          ninja -j1
+
+      - name: Run example
+        run: |
+          cd build
+          ./example/render_objs -i ../example/objs -o video.mp4
