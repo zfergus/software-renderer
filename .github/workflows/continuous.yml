@@ -73,7 +73,7 @@ jobs:
         run: cd build; make -j2; ccache --show-stats
 
       - name: Run example
-        run: cd build; ./example/render_objs -i ../example/objs -o video.mp4
+        run: cd build; pwd; ls ..; ./example/render_objs -i ../example/objs -o video.mp4
 
   ####################
   # Windows
