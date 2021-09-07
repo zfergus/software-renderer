@@ -1,80 +1,92 @@
-cmake_minimum_required(VERSION 3.8)
-project(swr)
-
-################################################################################
-# Project Options
-################################################################################
-
-if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-    set(SWR_TOPLEVEL_PROJECT ON)
+# Detects whether this is a top-level project
+get_directory_property(HAS_PARENT PARENT_DIRECTORY)
+if(HAS_PARENT)
+    set(SOFTWARE_RENDERER_TOPLEVEL_PROJECT OFF)
 else()
-    set(SWR_TOPLEVEL_PROJECT OFF)
+    set(SOFTWARE_RENDERER_TOPLEVEL_PROJECT ON)
 endif()
 
-if(SWR_TOPLEVEL_PROJECT)
-  option(SWR_BUILD_EXAMPLE  "Build unit-tests"  ON)
+# Check required CMake version
+set(REQUIRED_CMAKE_VERSION "3.14.0")
+if(SOFTWARE_RENDERER_TOPLEVEL_PROJECT)
+    cmake_minimum_required(VERSION ${REQUIRED_CMAKE_VERSION})
 else()
-  option(SWR_BUILD_EXAMPLE  "Build unit-tests"  OFF)
+    # Don't use cmake_minimum_required here to avoid implicitly overriding parent policies
+    if(${CMAKE_VERSION} VERSION_LESS ${REQUIRED_CMAKE_VERSION})
+        message(FATAL_ERROR "CMake required version to build Software Renderer is ${REQUIRED_CMAKE_VERSION}")
+    endif()
+endif()
+
+# Include user-provided default options if available. We do that before the main
+# `project()` so that we can define the C/C++ compilers from the option file.
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/SoftwareRendererOptions.cmake)
+    message(STATUS "Using local options file: ${CMAKE_CURRENT_SOURCE_DIR}/SoftwareRendererOptions.cmake")
+    include(${CMAKE_CURRENT_SOURCE_DIR}/SoftwareRendererOptions.cmake)
 endif()
 
 ################################################################################
-# Configuration
-################################################################################
 
-set(SWR_EXTERNAL "${CMAKE_CURRENT_SOURCE_DIR}/external")
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
+project(SoftwareRenderer
+        DESCRIPTION "A basic headless software renderer."
+        LANGUAGES CXX)
 
-include(Warnings)
-include(UseColors)
-include(SWRDependencies)
+option(SOFTWARE_RENDERER_BUILD_EXAMPLE  "Build unit-tests"      ${SOFTWARE_RENDERER_TOPLEVEL_PROJECT})
+option(SOFTWARE_RENDERER_WITH_SIMD      "Use SIMD instructions" OFF)
+
+# Set default minimum C++ standard
+if(RIGID_IPC_TOPLEVEL_PROJECT)
+    set(CMAKE_CXX_STANDARD 11)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+    set(CMAKE_CXX_EXTENSIONS OFF)
+endif()
+
+list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake/software_renderer/")
+list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake/recipes/")
+list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake/find/")
+
+# Color output
+include(software_renderer_use_colors)
 
 ################################################################################
 # Software Renderer Library
 ################################################################################
 
-add_library(${PROJECT_NAME}
+add_library(software_renderer
   src/camera.cpp
   src/raster.cpp
   src/render_mesh.cpp
   src/write_png.cpp
 )
-
-target_include_directories(${PROJECT_NAME} PUBLIC include)
-
-target_link_libraries(${PROJECT_NAME} PUBLIC igl::core igl::stbimage)
-target_link_libraries(${PROJECT_NAME} PUBLIC TBB::tbb)
-target_link_libraries(${PROJECT_NAME} PUBLIC nlohmann::json)
-
-################################################################################
-# Example renderer
-################################################################################
-
-if(SWR_BUILD_EXAMPLE)
-  add_subdirectory(example)
-endif()
+target_include_directories(software_renderer PUBLIC include)
+add_library(software_renderer::software_renderer ALIAS software_renderer)
 
 ################################################################################
 # Required Libraries
 ################################################################################
 
 # Extra warnings
-target_link_libraries(${PROJECT_NAME} PRIVATE warnings::all)
+include(software_renderer_warnings)
+target_link_libraries(software_renderer PRIVATE software_renderer::warnings)
 
-# Eigen
-target_link_libraries(${PROJECT_NAME} PUBLIC Eigen3::Eigen)
+include(eigen)
+include(libigl)
+target_link_libraries(software_renderer PUBLIC igl::core igl::stbimage)
 
-# TBB
-target_link_libraries(${PROJECT_NAME} PUBLIC TBB::tbb)
+include(stb_image)
+target_link_libraries(software_renderer PUBLIC igl::core igl::stbimage)
 
-# JSON Parser
-target_link_libraries(${PROJECT_NAME} PUBLIC nlohmann::json)
+include(tbb)
+target_link_libraries(software_renderer PUBLIC TBB::tbb)
+
+include(json)
+target_link_libraries(software_renderer PUBLIC nlohmann::json)
 
 ################################################################################
 # Compiler options
 ################################################################################
 
 ## SIMD support
-if(SWR_WITH_SIMD)
+if(SOFTWARE_RENDERER_WITH_SIMD)
   # Figure out SSE level support
   message(STATUS "Seaching for SSE...")
   find_package(SSE)
@@ -92,7 +104,15 @@ if(SWR_WITH_SIMD)
   endif()
   # Add SSE, AVX, and FMA flags to compiler flags
   string(REPLACE " " ";" SIMD_FLAGS "${SSE_FLAGS} ${AVX_FLAGS} ${FMA_FLAGS}")
-  target_compile_options(${PROJECT_NAME} PUBLIC ${SIMD_FLAGS})
+  target_compile_options(software_renderer PUBLIC ${SIMD_FLAGS})
 endif()
 
-target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_11)
+target_compile_features(software_renderer PUBLIC cxx_std_11)
+
+################################################################################
+# Example renderer
+################################################################################
+
+if(SOFTWARE_RENDERER_BUILD_EXAMPLE)
+  add_subdirectory(example)
+endif()
