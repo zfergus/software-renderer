@@ -75,3 +75,4 @@ build
 external
 example/frames
 example/video.mp4
+!example/objs/*.obj
