@@ -1,5 +1,8 @@
 # software-renderer
 
+[![Build](https://github.com/zfergus/software-renderer/actions/workflows/continuous.yml/badge.svg)](https://github.com/zfergus/software-renderer/actions/workflows/continuous.yml)
+[![License](https://img.shields.io/github/license/zfergus/software-renderer.svg?color=blue)](https://github.com/zfergus/software-renderer/blob/main/LICENSE)
+
 <p align="center">
     <img src="img/example.png" width="25%">
 </p>
