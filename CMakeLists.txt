@@ -35,7 +35,7 @@ option(SOFTWARE_RENDERER_WITH_SIMD      "Use SIMD instructions" OFF)
 
 # Set default minimum C++ standard
 if(RIGID_IPC_TOPLEVEL_PROJECT)
-    set(CMAKE_CXX_STANDARD 11)
+    set(CMAKE_CXX_STANDARD 17)
     set(CMAKE_CXX_STANDARD_REQUIRED ON)
     set(CMAKE_CXX_EXTENSIONS OFF)
 endif()
@@ -64,22 +64,22 @@ add_library(software_renderer::software_renderer ALIAS software_renderer)
 # Required Libraries
 ################################################################################
 
-# Extra warnings
-include(software_renderer_warnings)
-target_link_libraries(software_renderer PRIVATE software_renderer::warnings)
-
 include(eigen)
 include(libigl)
-target_link_libraries(software_renderer PUBLIC igl::core igl::stbimage)
+target_link_libraries(software_renderer PUBLIC igl::core)
 
-include(stb_image)
-target_link_libraries(software_renderer PUBLIC igl::core igl::stbimage)
+include(stb)
+target_link_libraries(software_renderer PUBLIC stb::stb)
 
-include(tbb)
+include(onetbb)
 target_link_libraries(software_renderer PUBLIC TBB::tbb)
 
 include(json)
-target_link_libraries(software_renderer PUBLIC nlohmann::json)
+target_link_libraries(software_renderer PUBLIC nlohmann_json::nlohmann_json)
+
+# Extra warnings
+include(software_renderer_warnings)
+target_link_libraries(software_renderer PRIVATE software_renderer::warnings)
 
 ################################################################################
 # Compiler options
@@ -107,7 +107,7 @@ if(SOFTWARE_RENDERER_WITH_SIMD)
   target_compile_options(software_renderer PUBLIC ${SIMD_FLAGS})
 endif()
 
-target_compile_features(software_renderer PUBLIC cxx_std_11)
+target_compile_features(software_renderer PUBLIC cxx_std_17)
 
 ################################################################################
 # Example renderer

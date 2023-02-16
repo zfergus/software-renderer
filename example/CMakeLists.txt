@@ -22,9 +22,6 @@ target_link_libraries(render_objs PUBLIC spdlog::spdlog)
 include(cli11)
 target_link_libraries(render_objs PUBLIC CLI11::CLI11)
 
-include(filesystem)
-target_link_libraries(render_objs PUBLIC ghc::filesystem)
-
 ################################################################################
 # Compiler options
 ################################################################################

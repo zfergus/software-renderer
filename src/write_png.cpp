@@ -1,6 +1,6 @@
 #include <swr/write_png.hpp>
 
-#include <igl_stb_image.h>
+#include <stb_image_write.h>
 
 namespace swr {
 
@@ -31,8 +31,7 @@ bool write_png(
         }
     }
 
-    igl::stbi_write_png(
-        filename.c_str(), w, h, comp, image.data(), stride_in_bytes);
+    stbi_write_png(filename.c_str(), w, h, comp, image.data(), stride_in_bytes);
 
     return true;
 }

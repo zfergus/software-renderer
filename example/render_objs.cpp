@@ -1,8 +1,6 @@
-#include <ctime>
-#include <string>
+#include <swr/render_mesh.hpp>
 
 #include <CLI/CLI.hpp>
-#include <ghc/fs_std.hpp> // filesystem
 #include <igl/Timer.h>
 #include <igl/edges.h>
 #include <igl/readOBJ.h>
@@ -14,7 +12,10 @@
 #include <tbb/parallel_for.h>
 #include <tbb/parallel_sort.h>
 
-#include <swr/render_mesh.hpp>
+#include <ctime>
+#include <filesystem>
+#include <string>
+namespace fs = std::filesystem;
 
 using namespace swr;
 
